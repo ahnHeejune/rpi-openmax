@@ -74,11 +74,22 @@ typedef struct {
     OMX_BUFFERHEADERTYPE *camera_ppBuffer_in;
     int camera_ready;
 
+    // 1st encoder
     OMX_HANDLETYPE encoder;
     OMX_BUFFERHEADERTYPE *encoder_ppBuffer_out;
     int encoder_output_buffer_available;  // flag for non-tunelling output port, how about tunneling to file sink ?? 
+
+#ifndef ORIGINAL
+    OMX_HANDLETYPE video_splitter;   
+    OMX_HANDLETYPE resize;   
+
+    // 2nd encoder
+    OMX_HANDLETYPE encoder2;
+    OMX_BUFFERHEADERTYPE *encoder_ppBuffer_out2;
+    int encoder_output_buffer_available2;  // flag for non-tunelling output port, how about tunneling to file sink ?? 
    
-    OMX_HANDLETYPE splitter;   
+    OMX_HANDLETYPE write_media;   
+#endif
 
     OMX_HANDLETYPE null_sink;
 
@@ -480,7 +491,14 @@ static OMX_ERRORTYPE fill_output_buffer_done_handler(
     appctx *ctx = ((appctx*)pAppData);
     vcos_semaphore_wait(&ctx->handler_lock);
     // The main loop can now flush the buffer to output file
-    ctx->encoder_output_buffer_available = 1;
+    if(hComponent == ctx->encoder)
+    		ctx->encoder_output_buffer_available = 1;
+#ifndef ORIGNAL
+    else if(hComponent == ctx->encoder2)
+    		ctx->encoder_output_buffer_available2 = 1;
+#endif
+
+
     vcos_semaphore_post(&ctx->handler_lock);
     return OMX_ErrorNone;
 }
@@ -646,19 +664,46 @@ static int rpiomx_camera_setup(appctx *pctx, OMX_PARAM_PORTDEFINITIONTYPE *pcame
     return 0;
 }
 
+#ifndef ORIGINAL
+/*------------------------------------------------
+  video_splitter component setup using camera output port format 
+
+
+-------------------------------------------------*/
+static int rpiomx_video_splitter_setup(appctx *pctx, OMX_PARAM_PORTDEFINITIONTYPE *pcamera_portdef)
+{
+    //OMX_ERRORTYPE r;
+    say("Default port definition for video splitter input port 250");
+    dump_port(pctx->video_splitter, 250, OMX_TRUE);
+    say("Default port definition for video splitter output port 251");
+    dump_port(pctx->video_splitter, 251, OMX_TRUE);
+    say("Default port definition for video splitter output port 252");
+    dump_port(pctx->video_splitter, 252, OMX_TRUE);
+    say("Default port definition for video splitter output port 253");
+    dump_port(pctx->video_splitter, 253, OMX_TRUE);
+    say("Default port definition for video splitter output port 254");
+    dump_port(pctx->video_splitter, 254, OMX_TRUE);
+
+    // video splitter input port definition is done automatically upon tunneling?????
+
+    // how about the output ??
+
+    return 0;
+}
+#endif 
+
 /*------------------------------------------------
   encoder component setup using camera output port format 
 
 
-
 -------------------------------------------------*/
-static int rpiomx_encoder_setup(appctx *pctx, OMX_PARAM_PORTDEFINITIONTYPE *pcamera_portdef)
+static int rpiomx_encoder_setup(OMX_HANDLETYPE hcomp, OMX_PARAM_PORTDEFINITIONTYPE *pcamera_portdef)
 {
     OMX_ERRORTYPE r;
     say("Default port definition for encoder input port 200");
-    dump_port(pctx->encoder, 200, OMX_TRUE);
+    dump_port(hcomp, 200, OMX_TRUE);
     say("Default port definition for encoder output port 201");
-    dump_port(pctx->encoder, 201, OMX_TRUE);
+    dump_port(hcomp, 201, OMX_TRUE);
 
     // Encoder input port definition is done automatically upon tunneling
 
@@ -666,7 +711,7 @@ static int rpiomx_encoder_setup(appctx *pctx, OMX_PARAM_PORTDEFINITIONTYPE *pcam
     OMX_PARAM_PORTDEFINITIONTYPE encoder_portdef;
     OMX_INIT_STRUCTURE(encoder_portdef);
     encoder_portdef.nPortIndex = 201;
-    if((r = OMX_GetParameter(pctx->encoder, OMX_IndexParamPortDefinition, &encoder_portdef)) != OMX_ErrorNone) {
+    if((r = OMX_GetParameter(hcomp, OMX_IndexParamPortDefinition, &encoder_portdef)) != OMX_ErrorNone) {
         omx_die(r, "Failed to get port definition for encoder output port 201");
     }
     // Copy some of the encoder output port configuration
@@ -677,7 +722,7 @@ static int rpiomx_encoder_setup(appctx *pctx, OMX_PARAM_PORTDEFINITIONTYPE *pcam
     encoder_portdef.format.video.nStride      = pcamera_portdef->format.video.nStride;
     // Which one is effective, this or the configuration just below?
     encoder_portdef.format.video.nBitrate     = VIDEO_BITRATE;
-    if((r = OMX_SetParameter(pctx->encoder, OMX_IndexParamPortDefinition, &encoder_portdef)) != OMX_ErrorNone) {
+    if((r = OMX_SetParameter(hcomp, OMX_IndexParamPortDefinition, &encoder_portdef)) != OMX_ErrorNone) {
         omx_die(r, "Failed to set port definition for encoder output port 201");
     }
     // Configure bitrate
@@ -686,7 +731,7 @@ static int rpiomx_encoder_setup(appctx *pctx, OMX_PARAM_PORTDEFINITIONTYPE *pcam
     bitrate.eControlRate = OMX_Video_ControlRateVariable;
     bitrate.nTargetBitrate = encoder_portdef.format.video.nBitrate;
     bitrate.nPortIndex = 201;
-    if((r = OMX_SetParameter(pctx->encoder, OMX_IndexParamVideoBitrate, &bitrate)) != OMX_ErrorNone) {
+    if((r = OMX_SetParameter(hcomp, OMX_IndexParamVideoBitrate, &bitrate)) != OMX_ErrorNone) {
         omx_die(r, "Failed to set bitrate for encoder output port 201");
     }
     // Configure format
@@ -694,23 +739,41 @@ static int rpiomx_encoder_setup(appctx *pctx, OMX_PARAM_PORTDEFINITIONTYPE *pcam
     OMX_INIT_STRUCTURE(format);
     format.nPortIndex = 201;
     format.eCompressionFormat = OMX_VIDEO_CodingAVC;
-    if((r = OMX_SetParameter(pctx->encoder, OMX_IndexParamVideoPortFormat, &format)) != OMX_ErrorNone) {
+    if((r = OMX_SetParameter(hcomp, OMX_IndexParamVideoPortFormat, &format)) != OMX_ErrorNone) {
         omx_die(r, "Failed to set video format for encoder output port 201");
     }
 
     return 0;
 }
 
+/*---------------------------------------------
+
+  1. set all components into idle state from loaded
+  2. enable all ports necessary  
+  3. allocate all non-tunnelng buffer
+-------------------------------------------------*/
 static int rpiomx_graph_ready(appctx *pctx)
 {
     OMX_ERRORTYPE r;
 
-    // Switch components to idle state
+    // 1. Switch components to idle state
     say("Switching state of the camera component to idle...");
     if((r = OMX_SendCommand(pctx->camera, OMX_CommandStateSet, OMX_StateIdle, NULL)) != OMX_ErrorNone) {
         omx_die(r, "Failed to switch state of the camera component to idle");
     }
     block_until_state_changed(pctx->camera, OMX_StateIdle);
+#ifndef ORIGINAL
+    say("Switching state of the video_splitter component to idle...");
+    if((r = OMX_SendCommand(pctx->video_splitter, OMX_CommandStateSet, OMX_StateIdle, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to switch state of the video_splitter component to idle");
+    }
+    block_until_state_changed(pctx->video_splitter, OMX_StateIdle);
+    say("Switching state of the encoder2 component to idle...");
+    if((r = OMX_SendCommand(pctx->encoder2, OMX_CommandStateSet, OMX_StateIdle, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to switch state of the encoder2 component to idle");
+    }
+    block_until_state_changed(pctx->encoder2, OMX_StateIdle);
+#endif
     say("Switching state of the encoder component to idle...");
     if((r = OMX_SendCommand(pctx->encoder, OMX_CommandStateSet, OMX_StateIdle, NULL)) != OMX_ErrorNone) {
         omx_die(r, "Failed to switch state of the encoder component to idle");
@@ -721,8 +784,15 @@ static int rpiomx_graph_ready(appctx *pctx)
         omx_die(r, "Failed to switch state of the null sink component to idle");
     }
     block_until_state_changed(pctx->null_sink, OMX_StateIdle);
+#ifndef ORIGINAL
+    say("Switching state of the write_media component to idle...");
+    if((r = OMX_SendCommand(pctx->write_media, OMX_CommandStateSet, OMX_StateIdle, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to switch state of the write_media component to idle");
+    }
+    block_until_state_changed(pctx->write_media, OMX_StateIdle);
+#endif
 
-    // Enable ports
+    // 2.  Enable ports
     say("Enabling ports...");
     if((r = OMX_SendCommand(pctx->camera, OMX_CommandPortEnable, 73, NULL)) != OMX_ErrorNone) {
         omx_die(r, "Failed to enable camera input port 73");
@@ -736,6 +806,32 @@ static int rpiomx_graph_ready(appctx *pctx)
         omx_die(r, "Failed to enable camera video output port 71");
     }
     block_until_port_changed(pctx->camera, 71, OMX_TRUE);
+
+#ifndef ORIGINAL
+    if((r = OMX_SendCommand(pctx->video_splitter, OMX_CommandPortEnable, 250, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to enable video_splitter input  port 250");
+    }
+    block_until_port_changed(pctx->video_splitter, 250, OMX_TRUE);
+    if((r = OMX_SendCommand(pctx->video_splitter, OMX_CommandPortEnable, 251, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to enable video_splitter input  port 251");
+    }
+    block_until_port_changed(pctx->video_splitter, 251, OMX_TRUE);
+    if((r = OMX_SendCommand(pctx->video_splitter, OMX_CommandPortEnable, 252, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to enable video_splitter input  port 252");
+    }
+    block_until_port_changed(pctx->video_splitter, 251, OMX_TRUE);
+
+    if((r = OMX_SendCommand(pctx->encoder2, OMX_CommandPortEnable, 200, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to enable encoder input port 200");
+    }
+    block_until_port_changed(pctx->encoder2, 200, OMX_TRUE);
+    if((r = OMX_SendCommand(pctx->encoder2, OMX_CommandPortEnable, 201, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to enable encoder output port 201");
+    }
+    block_until_port_changed(pctx->encoder2, 201, OMX_TRUE);
+#endif
+
+
     if((r = OMX_SendCommand(pctx->encoder, OMX_CommandPortEnable, 200, NULL)) != OMX_ErrorNone) {
         omx_die(r, "Failed to enable encoder input port 200");
     }
@@ -749,7 +845,7 @@ static int rpiomx_graph_ready(appctx *pctx)
     }
     block_until_port_changed(pctx->null_sink, 240, OMX_TRUE);
 
-    // Allocate camera input buffer and encoder output buffer,
+    // 3. Allocate camera input buffer and encoder output buffer,
     // buffers for tunneled ports are allocated internally by OMX
     say("Allocating buffers...");
     OMX_PARAM_PORTDEFINITIONTYPE camera_portdef;
@@ -761,7 +857,21 @@ static int rpiomx_graph_ready(appctx *pctx)
     if((r = OMX_AllocateBuffer(pctx->camera, &pctx->camera_ppBuffer_in, 73, NULL, camera_portdef.nBufferSize)) != OMX_ErrorNone) {
         omx_die(r, "Failed to allocate buffer for camera input port 73");
     }
+
+#ifndef ORIGINAL
+    say("buffers for tunneled ports are allocated internally by OMX");
     OMX_PARAM_PORTDEFINITIONTYPE encoder_portdef;
+    OMX_INIT_STRUCTURE(encoder_portdef);
+    encoder_portdef.nPortIndex = 201;
+    if((r = OMX_GetParameter(pctx->encoder2, OMX_IndexParamPortDefinition, &encoder_portdef)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to get port definition for encoder2 output port 201");
+    }
+    if((r = OMX_AllocateBuffer(pctx->encoder2, &pctx->encoder_ppBuffer_out2, 201, NULL, encoder_portdef.nBufferSize)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to allocate buffer for encoder 2 output port 201");
+    }
+#endif
+
+    //OMX_PARAM_PORTDEFINITIONTYPE encoder_portdef;
     OMX_INIT_STRUCTURE(encoder_portdef);
     encoder_portdef.nPortIndex = 201;
     if((r = OMX_GetParameter(pctx->encoder, OMX_IndexParamPortDefinition, &encoder_portdef)) != OMX_ErrorNone) {
@@ -775,8 +885,11 @@ static int rpiomx_graph_ready(appctx *pctx)
 }
 
 /*----------------------------------------
-  turn components into executing state
-  in the order of camera => encoder & sink
+
+  Running 
+
+  1. turn components into executing state
+  2. in the order of camera => encoder & sink
   then turn on the output port (why here??)
 
 -----------------------------------------*/
@@ -790,6 +903,22 @@ static int rpiomx_graph_fire(appctx *pctx)
         omx_die(r, "Failed to switch state of the camera component to executing");
     }
     block_until_state_changed(pctx->camera, OMX_StateExecuting);
+
+#ifndef ORIGINAL
+    say("Switching state of the video_splitter component to executing...");
+    if((r = OMX_SendCommand(pctx->video_splitter, OMX_CommandStateSet, OMX_StateExecuting, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to switch state of the video_splitter component to executing");
+    }
+    block_until_state_changed(pctx->video_splitter, OMX_StateExecuting);
+
+    say("Switching state of the encoder 2 component to executing...");
+    if((r = OMX_SendCommand(pctx->encoder2, OMX_CommandStateSet, OMX_StateExecuting, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to switch state of the encoder component to executing");
+    }
+    block_until_state_changed(pctx->encoder2, OMX_StateExecuting);
+
+#endif
+
     say("Switching state of the encoder component to executing...");
     if((r = OMX_SendCommand(pctx->encoder, OMX_CommandStateSet, OMX_StateExecuting, NULL)) != OMX_ErrorNone) {
         omx_die(r, "Failed to switch state of the encoder component to executing");
@@ -801,7 +930,7 @@ static int rpiomx_graph_fire(appctx *pctx)
     }
     block_until_state_changed(pctx->null_sink, OMX_StateExecuting);
 
-    // Start capturing video with the camera
+    // 2. Start capturing video with the camera
     say("Switching on capture on camera video output port 71...");
     OMX_CONFIG_PORTBOOLEANTYPE capture;
     OMX_INIT_STRUCTURE(capture);
@@ -837,13 +966,19 @@ static int rpiomx_graph_shutdown(appctx *pctx)
     }
 
     // ???
-    // Return the last full buffer back to the encoder component
+    // 2. Return the last full buffer back to the encoder component
     pctx->encoder_ppBuffer_out->nFlags = OMX_BUFFERFLAG_EOS;
     if((r = OMX_FillThisBuffer(pctx->encoder, pctx->encoder_ppBuffer_out)) != OMX_ErrorNone) {
         omx_die(r, "Failed to request filling of the output buffer on encoder output port 201");
     }
+#ifndef ORIGINAL
+    pctx->encoder_ppBuffer_out2->nFlags = OMX_BUFFERFLAG_EOS;
+    if((r = OMX_FillThisBuffer(pctx->encoder2, pctx->encoder_ppBuffer_out2)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to request filling of the output buffer on encoder output port 201");
+    }
+#endif
 
-    // 2.Flush the buffers on each component
+    // 3.Flush the buffers on each component
     if((r = OMX_SendCommand(pctx->camera, OMX_CommandFlush, 73, NULL)) != OMX_ErrorNone) {
         omx_die(r, "Failed to flush buffers of camera input port 73");
     }
@@ -856,6 +991,28 @@ static int rpiomx_graph_shutdown(appctx *pctx)
         omx_die(r, "Failed to flush buffers of camera video output port 71");
     }
     block_until_flushed(pctx);
+
+#ifndef ORIGINAL
+    if((r = OMX_SendCommand(pctx->video_splitter, OMX_CommandFlush, 250, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to flush buffers of video_splitter input port 250");
+    }
+    block_until_flushed(pctx);
+    if((r = OMX_SendCommand(pctx->video_splitter, OMX_CommandFlush, 251, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to flush buffers of video_splitter output port 251");
+    }
+    block_until_flushed(pctx);
+    if((r = OMX_SendCommand(pctx->video_splitter, OMX_CommandFlush, 252, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to flush buffers of video_splitter output port 251");
+    }
+    block_until_flushed(pctx);
+
+    if((r = OMX_SendCommand(pctx->encoder2, OMX_CommandFlush, 200, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to flush buffers of encoder input port 200");
+    }
+    block_until_flushed(pctx);
+#endif
+
+
     if((r = OMX_SendCommand(pctx->encoder, OMX_CommandFlush, 200, NULL)) != OMX_ErrorNone) {
         omx_die(r, "Failed to flush buffers of encoder input port 200");
     }
@@ -871,6 +1028,23 @@ static int rpiomx_graph_shutdown(appctx *pctx)
 
     return 0;
 }
+
+
+#if 0 
+/*----------------------------------------------
+  port enable or disabled
+-----------------------------------------------*/
+static int rpiomx_port_disable(OMX_HANDLETYPE hcomp, int portnum, const char *portname)
+{
+    if((r = OMX_SendCommand(hcomp, OMX_CommandPortDisable, portnum, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to disable %s %d", portname, portnum);
+    }
+    block_until_port_changed(hcomp, portnum, OMX_FALSE);
+
+    return 0;
+}
+#endif
+
 
 /*------------------------------------------------
 
@@ -899,17 +1073,44 @@ static int rpiomx_graph_teardown(appctx *pctx)
         omx_die(r, "Failed to disable camera video output port 71");
     }
     block_until_port_changed(pctx->camera, 71, OMX_FALSE);
+
+
+#ifndef ORIGINAL
+    // video_splitter ports
+    if((r = OMX_SendCommand(pctx->video_splitter, OMX_CommandPortDisable, 250, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to disable video_splitter input port 250");
+    }
+    block_until_port_changed(pctx->video_splitter, 250, OMX_FALSE);
+    if((r = OMX_SendCommand(pctx->video_splitter, OMX_CommandPortDisable, 251, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to disable video_splitter output port 251");
+    }
+    block_until_port_changed(pctx->video_splitter, 251, OMX_FALSE);
+    if((r = OMX_SendCommand(pctx->video_splitter, OMX_CommandPortDisable, 252, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to disable video_splitter output port 252");
+    }
+    block_until_port_changed(pctx->video_splitter, 252, OMX_FALSE);
+
+    if((r = OMX_SendCommand(pctx->encoder2, OMX_CommandPortDisable, 200, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to disable encoder input port 200");
+    }
+    block_until_port_changed(pctx->encoder2, 200, OMX_FALSE);
+    if((r = OMX_SendCommand(pctx->encoder2, OMX_CommandPortDisable, 201, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to disable encoder output port 201");
+    }
+    block_until_port_changed(pctx->encoder2, 201, OMX_FALSE);
+#endif
+
+    // encoder ports
     if((r = OMX_SendCommand(pctx->encoder, OMX_CommandPortDisable, 200, NULL)) != OMX_ErrorNone) {
         omx_die(r, "Failed to disable encoder input port 200");
     }
     block_until_port_changed(pctx->encoder, 200, OMX_FALSE);
-
-
-    // encoder ports
     if((r = OMX_SendCommand(pctx->encoder, OMX_CommandPortDisable, 201, NULL)) != OMX_ErrorNone) {
         omx_die(r, "Failed to disable encoder output port 201");
     }
     block_until_port_changed(pctx->encoder, 201, OMX_FALSE);
+
+
     if((r = OMX_SendCommand(pctx->null_sink, OMX_CommandPortDisable, 240, NULL)) != OMX_ErrorNone) {
         omx_die(r, "Failed to disable null sink input port 240");
     }
@@ -919,6 +1120,11 @@ static int rpiomx_graph_teardown(appctx *pctx)
     if((r = OMX_FreeBuffer(pctx->camera, 73, pctx->camera_ppBuffer_in)) != OMX_ErrorNone) {
         omx_die(r, "Failed to free buffer for camera input port 73");
     }
+#ifndef ORIGINAL
+    if((r = OMX_FreeBuffer(pctx->encoder2, 201, pctx->encoder_ppBuffer_out2)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to free buffer for encoder output port 201");
+    }
+#endif
     if((r = OMX_FreeBuffer(pctx->encoder, 201, pctx->encoder_ppBuffer_out)) != OMX_ErrorNone) {
         omx_die(r, "Failed to free buffer for encoder output port 201");
     }
@@ -929,6 +1135,16 @@ static int rpiomx_graph_teardown(appctx *pctx)
         omx_die(r, "Failed to switch state of the camera component to idle");
     }
     block_until_state_changed(pctx->camera, OMX_StateIdle);
+#ifndef ORIGINAL
+    if((r = OMX_SendCommand(pctx->video_splitter, OMX_CommandStateSet, OMX_StateIdle, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to switch state of the video_splitter component to idle");
+    }
+    block_until_state_changed(pctx->video_splitter, OMX_StateIdle);
+    if((r = OMX_SendCommand(pctx->encoder2, OMX_CommandStateSet, OMX_StateIdle, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to switch state of the encoder 2 component to idle");
+    }
+    block_until_state_changed(pctx->encoder2, OMX_StateIdle);
+#endif
     if((r = OMX_SendCommand(pctx->encoder, OMX_CommandStateSet, OMX_StateIdle, NULL)) != OMX_ErrorNone) {
         omx_die(r, "Failed to switch state of the encoder component to idle");
     }
@@ -944,6 +1160,18 @@ static int rpiomx_graph_teardown(appctx *pctx)
         omx_die(r, "Failed to switch state of the camera component to loaded");
     }
     block_until_state_changed(pctx->camera, OMX_StateLoaded);
+
+#ifndef ORIGINAL
+    if((r = OMX_SendCommand(pctx->video_splitter, OMX_CommandStateSet, OMX_StateLoaded, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to switch state of the video_splitter component to loaded");
+    }
+    block_until_state_changed(pctx->video_splitter, OMX_StateLoaded);
+    if((r = OMX_SendCommand(pctx->encoder2, OMX_CommandStateSet, OMX_StateLoaded, NULL)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to switch state of the encoder  2 component to loaded");
+    }
+    block_until_state_changed(pctx->encoder2, OMX_StateLoaded);
+#endif
+
     if((r = OMX_SendCommand(pctx->encoder, OMX_CommandStateSet, OMX_StateLoaded, NULL)) != OMX_ErrorNone) {
         omx_die(r, "Failed to switch state of the encoder component to loaded");
     }
@@ -962,6 +1190,10 @@ static int rpiomx_graph_teardown(appctx *pctx)
 /                                                                    	/ 
 / (73)camera(71) ---70							/	
 /           (70)              
+/
+/
+/  camera -- splitter -- encoder -- write_media
+/                        resize  -- encoder 
 /--------------------------------------------------------------------	*/
 int main(int argc, char **argv) 
 {
@@ -990,7 +1222,12 @@ int main(int argc, char **argv)
     callbacks.FillBufferDone = fill_output_buffer_done_handler;
 
     init_component_handle("camera", &ctx.camera , &ctx, &callbacks);
-    init_component_handle("video_splitter", &ctx.splitter, &ctx, &callbacks);
+#ifndef ORIGINAL
+    init_component_handle("video_splitter", &ctx.video_splitter, &ctx, &callbacks);
+    init_component_handle("resize", &ctx.resize, &ctx, &callbacks);
+    init_component_handle("write_media", &ctx.write_media, &ctx, &callbacks);
+    init_component_handle("video_encode", &ctx.encoder2, &ctx, &callbacks);
+#endif
     init_component_handle("video_encode", &ctx.encoder, &ctx, &callbacks);
     init_component_handle("null_sink", &ctx.null_sink, &ctx, &callbacks);
 
@@ -1006,9 +1243,17 @@ int main(int argc, char **argv)
 	if(n++ > 100) die("Failed to configuring camera");
     }
 
+#ifndef ORIGINAL
+    say("Configuring video_splitter...");
+    rpiomx_video_splitter_setup(&ctx, &camera_portdef);
+#endif
+
     // 1.2.2 encoder compenent setup 
     say("Configuring encoder...");
-    rpiomx_encoder_setup(&ctx, &camera_portdef);
+    rpiomx_encoder_setup(ctx.encoder, &camera_portdef);
+#ifndef ORIGINAL
+    rpiomx_encoder_setup(ctx.encoder2, &camera_portdef);
+#endif
 
     // 1.2.3 null sink setup
     // we may need one more null sink for splitter later 
@@ -1025,11 +1270,30 @@ int main(int argc, char **argv)
         omx_die(r, "Failed to setup tunnel between camera preview output port 70 and null sink input port 240");
     }
 
+#ifdef ORIGINAL 
     // Tunnel camera video output port and encoder input port
     say("Setting up tunnel from camera video output port 71 to encoder input port 200...");
     if((r = OMX_SetupTunnel(ctx.camera, 71, ctx.encoder, 200)) != OMX_ErrorNone) {
         omx_die(r, "Failed to setup tunnel between camera video output port 71 and encoder input port 200");
     }
+#else
+    // Tunnel camera video output port and splitter input port
+    say("Setting up tunnel from camera video output port 71 to splitter  input port 250...");
+    if((r = OMX_SetupTunnel(ctx.camera, 71, ctx.video_splitter, 250)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to setup tunnel between camera video output port 71 and splitter input port 250");
+    }
+    // Tunnel camera video output port and encoder input port
+    say("Setting up tunnel from splitter output port 251 to encoder input port 200...");
+    if((r = OMX_SetupTunnel(ctx.video_splitter, 251, ctx.encoder, 200)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to setup tunnel between video_splitter output port 251 and encoder input port 200");
+    }
+
+    // Tunnel camera video output port and encoder input port
+    say("Setting up tunnel from splitter output port 252 to encoder 2 input port 200...");
+    if((r = OMX_SetupTunnel(ctx.video_splitter, 252, ctx.encoder2, 200)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to setup tunnel between video_splitter output port 252 and encoder2 input port 200");
+    }
+#endif
 
 
     // 1.4 get ready components 
@@ -1049,6 +1313,18 @@ int main(int argc, char **argv)
     dump_port(ctx.camera, 70, OMX_FALSE);
     say("Configured port definition for camera video output port 71");
     dump_port(ctx.camera, 71, OMX_FALSE);
+#ifndef ORIGINAL
+    say("Configured port definition for video_splitter input port 250");
+    dump_port(ctx.video_splitter, 250, OMX_FALSE);
+    say("Configured port definition for video_splitter output port 251");
+    dump_port(ctx.video_splitter, 251, OMX_FALSE);
+    say("Configured port definition for video_splitter output port 252");
+    dump_port(ctx.video_splitter, 252, OMX_FALSE);
+    say("Configured port definition for encoder 2 input port 200");
+    dump_port(ctx.encoder2, 200, OMX_FALSE);
+    say("Configured port definition for encoder 2 output port 201");
+    dump_port(ctx.encoder2, 201, OMX_FALSE);
+#endif
     say("Configured port definition for encoder input port 200");
     dump_port(ctx.encoder, 200, OMX_FALSE);
     say("Configured port definition for encoder output port 201");
@@ -1056,18 +1332,24 @@ int main(int argc, char **argv)
     say("Configured port definition for null sink input port 240");
     dump_port(ctx.null_sink, 240, OMX_FALSE);
 
+
     say("Enter capture and encode loop, press Ctrl-C to quit...");
 
     int quit_detected = 0, quit_in_keyframe = 0, need_next_buffer_to_be_filled = 1;
+    int quit_detected2 = 0, quit_in_keyframe2 = 0, need_next_buffer_to_be_filled2 = 1;
     size_t output_written;
+    //size_t output_written2;
 
     signal(SIGINT,  signal_handler);
     signal(SIGTERM, signal_handler);
     signal(SIGQUIT, signal_handler);
 
     int nframe = 0;
+    int nframe2 = 0;
     while(1) {
 
+
+	// encoder # 1
         // fill_output_buffer_done_handler() has marked that there's
         // a buffer for us to flush
         if(ctx.encoder_output_buffer_available) {
@@ -1108,6 +1390,49 @@ int main(int argc, char **argv)
                 omx_die(r, "Failed to request filling of the output buffer on encoder output port 201");
             }
         }
+
+	// encoder # 2
+        // fill_output_buffer_done_handler() has marked that there's
+        // a buffer for us to flush
+        if(ctx.encoder_output_buffer_available2) {
+
+            // Print a message if the user wants to quit, but don't exit
+            // the loop until we are certain that we have processed
+            // a full frame till end of the frame, i.e. we're at the end
+            // of the current key frame if processing one or until
+            // the next key frame is detected. This way we should always
+            // avoid corruption of the last encoded at the expense of
+            // small delay in exiting.
+            if(want_quit && !quit_detected2) {
+                say("Exit signal detected, waiting for next key frame boundry before exiting...");
+                quit_detected2 = 1;
+                quit_in_keyframe2 = ctx.encoder_ppBuffer_out2->nFlags & OMX_BUFFERFLAG_SYNCFRAME;
+            }
+            if(quit_detected2 && (quit_in_keyframe2 ^ (ctx.encoder_ppBuffer_out2->nFlags & OMX_BUFFERFLAG_SYNCFRAME))) {
+                say("Key frame boundry reached, exiting loop...");
+                break;
+            }
+            // Flush buffer to output file
+            // output_written = fwrite(ctx.encoder_ppBuffer_out2->pBuffer + ctx.encoder_ppBuffer_out2->nOffset, 1, ctx.encoder_ppBuffer_out2->nFilledLen, ctx.fd_out);
+            //if(output_written != ctx.encoder_ppBuffer_out2->nFilledLen) {
+            //    die("Failed to write to output file: %s", strerror(errno));
+            //}
+
+            //say("Read from output buffer and wrote to output file %d/%d", ctx.encoder_ppBuffer_out2->nFilledLen, ctx.encoder_ppBuffer_out2->nAllocLen);
+            say("fn2=%d",++nframe2);
+		
+            need_next_buffer_to_be_filled2 = 1;
+        }
+        // Buffer flushed, request a new buffer to be filled by the encoder component
+        if(need_next_buffer_to_be_filled2) {
+            need_next_buffer_to_be_filled2 = 0;
+            ctx.encoder_output_buffer_available2 = 0;
+            if((r = OMX_FillThisBuffer(ctx.encoder2, ctx.encoder_ppBuffer_out2)) != OMX_ErrorNone) {
+                omx_die(r, "Failed to request filling of the output buffer on encoder output port 201");
+            }
+        }
+
+
         // Would be better to use signaling here but hey this works too
         usleep(1000);
     }
@@ -1138,6 +1463,17 @@ int main(int argc, char **argv)
     if((r = OMX_FreeHandle(ctx.null_sink)) != OMX_ErrorNone) {
         omx_die(r, "Failed to free null sink component handle");
     }
+#ifndef ORIGINAL
+    if((r = OMX_FreeHandle(ctx.video_splitter)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to free video_splitter component handle");
+    }
+    if((r = OMX_FreeHandle(ctx.resize)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to free resize component handle");
+    }
+    if((r = OMX_FreeHandle(ctx.write_media)) != OMX_ErrorNone) {
+        omx_die(r, "Failed to free write_media component handle");
+    }
+#endif
 
     // 3.4 release all resources from system
     fclose(ctx.fd_out);
