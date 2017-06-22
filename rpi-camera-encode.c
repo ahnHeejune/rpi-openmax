@@ -93,8 +93,6 @@
 // Global variable used by the signal handler and capture/encoding loop
 static int want_quit = 0;
 
-typedef struct 
-
 // Our application context passed around
 // the main routine and callback handlers
 
@@ -559,7 +557,7 @@ int main(int argc, char **argv) {
     OMX_INIT_STRUCTURE(device);
     device.nPortIndex = OMX_ALL;
     device.nU32 = CAM_DEVICE_NUMBER;
-    if((r = OMX_SetParameter(ctx.camera.hanCameraDeviceNumber, &device)) != OMX_ErrorNone) {
+    if((r = OMX_SetParameter(ctx.camera.handle, OMX_IndexParamCameraDeviceNumber, &device)) != OMX_ErrorNone) {
         omx_die(r, "Failed to set camera parameter device number");
     }
     // Configure video format emitted by camera preview output port
