@@ -684,7 +684,7 @@ int main(int argc, char **argv) {
     }
 
     // Ensure camera is ready
-    while(!ctx.camera_ready) {
+    while(!ctx.camera.ready) {
         usleep(10000);
     }
 
@@ -736,19 +736,19 @@ int main(int argc, char **argv) {
     say("Configuring null sink...");
 
     say("Default port definition for null sink input port 240");
-    dump_port(ctx.null_sink, 240, OMX_TRUE);
+    dump_port(ctx.null_sink.handle, 240, OMX_TRUE);
 
     // Null sink input port definition is done automatically upon tunneling
 
     // Tunnel camera preview output port and null sink input port
     say("Setting up tunnel from camera preview output port 70 to null sink input port 240...");
-    if((r = OMX_SetupTunnel(ctx.camera, 70, ctx.null_sink, 240)) != OMX_ErrorNone) {
+    if((r = OMX_SetupTunnel(ctx.camera.handle, 70, ctx.null_sink.handle, 240)) != OMX_ErrorNone) {
         omx_die(r, "Failed to setup tunnel between camera preview output port 70 and null sink input port 240");
     }
 
     // Tunnel camera video output port and encoder input port
     say("Setting up tunnel from camera video output port 71 to encoder input port 200...");
-    if((r = OMX_SetupTunnel(ctx.camera, 71, ctx.encoder.handle, 200)) != OMX_ErrorNone) {
+    if((r = OMX_SetupTunnel(ctx.camera.handle, 71, ctx.encoder.handle, 200)) != OMX_ErrorNone) {
         omx_die(r, "Failed to setup tunnel between camera video output port 71 and encoder input port 200");
     }
 
