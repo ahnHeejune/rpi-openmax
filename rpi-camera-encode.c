@@ -93,18 +93,37 @@
 // Global variable used by the signal handler and capture/encoding loop
 static int want_quit = 0;
 
+typedef struct 
+
 // Our application context passed around
 // the main routine and callback handlers
-typedef struct {
-    OMX_HANDLETYPE camera;
-    OMX_BUFFERHEADERTYPE *camera_ppBuffer_in;
-    int camera_ready;
+
+typedef struct camera_t{
+    int ready;
+    
+    OMX_HANDLETYPE handle;
+    OMX_BUFFERHEADERTYPE *buffer_in;
+} camera_t;
+
+typedef struct encoder_t{
+    int ready;
+    
     OMX_HANDLETYPE encoder;
-    OMX_BUFFERHEADERTYPE *encoder_ppBuffer_out;
-    int encoder_output_buffer_available;
+    OMX_BUFFERHEADERTYPE *buffer_out;
+} encoder_t;
+
+typedef struct null_sink_t{
     OMX_HANDLETYPE null_sink;
+} null_sink_t;
+
+typedef struct {
+    camera_t    camera;
+    encoder_t   encoder;
+    null_sink_t null_sink;
+
     int flushed;
     FILE *fd_out;
+
     VCOS_SEMAPHORE_T handler_lock;
 } appctx;
 
@@ -462,7 +481,7 @@ static OMX_ERRORTYPE event_handler(
         case OMX_EventParamOrConfigChanged:
             vcos_semaphore_wait(&ctx->handler_lock);
             if(nData2 == OMX_IndexParamCameraDeviceNumber) {
-                ctx->camera_ready = 1;
+                ctx->camera.ready = 1;
             }
             vcos_semaphore_post(&ctx->handler_lock);
             break;
@@ -485,7 +504,7 @@ static OMX_ERRORTYPE fill_output_buffer_done_handler(
     appctx *ctx = ((appctx*)pAppData);
     vcos_semaphore_wait(&ctx->handler_lock);
     // The main loop can now flush the buffer to output file
-    ctx->encoder_output_buffer_available = 1;
+    ctx->encoder.ready = 1;
     vcos_semaphore_post(&ctx->handler_lock);
     return OMX_ErrorNone;
 }
@@ -512,9 +531,9 @@ int main(int argc, char **argv) {
     callbacks.EventHandler   = event_handler;
     callbacks.FillBufferDone = fill_output_buffer_done_handler;
 
-    init_component_handle("camera", &ctx.camera , &ctx, &callbacks);
-    init_component_handle("video_encode", &ctx.encoder, &ctx, &callbacks);
-    init_component_handle("null_sink", &ctx.null_sink, &ctx, &callbacks);
+    init_component_handle("camera", &ctx.camera.handle , &ctx, &callbacks);
+    init_component_handle("video_encode", &ctx.encoder.handle, &ctx, &callbacks);
+    init_component_handle("null_sink", &ctx.null_sink.handle, &ctx, &callbacks);
 
     say("Configuring camera...");
 
